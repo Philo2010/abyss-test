@@ -105,58 +105,32 @@ impl Storage {
         return id;
     }
 
-    pub fn add_user(&self, id: usize, user: String, user_id: Uuid) -> Result<(Uuid, Stations), GameDataError> { //auto asign
-        let avaable_stations = self.check_game(id)?;
+    pub fn add_user(&self, id: usize, user: String, user_id: Uuid) -> Result<(Uuid, Stations), GameDataError> {
+        let all_stations = [
+            Stations::Red1, Stations::Red2, Stations::Red3,
+            Stations::Blue1, Stations::Blue2, Stations::Blue3,
+        ];
 
-        let curr_station: Stations;
-
-        if let Some(station) = avaable_stations.first() {
-            curr_station = *station;
-        } else {
-            //just pick a random one
-            curr_station = match fastrand::u32(0..6) {
-                0 => Stations::Red1,
-                1 => Stations::Red2,
-                2 => Stations::Red3,
-                3 => Stations::Blue1,
-                4 => Stations::Blue2,
-                5 => Stations::Blue3,
-                _ => unreachable!(),
-            };
-        }
-
-        let user = UserEntry {
-            station: curr_station,
-            username: user,
-            done: false
-        };
         let games = self.games.read().unwrap();
-        if let Some(matche) = games.get(&id) {
-            let mut users = matche.users.write().unwrap();
-            users.insert(user_id, user);
-        } else {
-            return Err(GameDataError::Invalid)
-        }
+        let game = games.get(&id).ok_or(GameDataError::InvalidID)?;
+        let mut users = game.users.write().unwrap();
+
+        let taken: HashSet<Stations> = users.values().map(|u| u.station).collect();
+        let curr_station = all_stations.iter()
+            .find(|&&s| !taken.contains(&s))
+            .copied()
+            .unwrap_or_else(|| all_stations[fastrand::usize(0..6)]);
+
+        users.insert(user_id, UserEntry { station: curr_station, username: user, done: false });
         Ok((user_id, curr_station))
     }
 
-    pub fn start_game(&self, id: usize) -> Result<(), GameDataError> {
-        let issues = self.check_game(id)?;
-        if !issues.is_empty() {
-            return Err(GameDataError::GameIsNotReady);
-        }
-
-        let mut games= self.games.write().unwrap();
-        let mut game: &mut Game = match games.get_mut(&id) {
-            Some(a) => a,
-            None => {
-                return Err(GameDataError::InvalidID);
-            },
-        };
+    pub fn start_game(&self, id: usize) -> Result<Vec<Uuid>, GameDataError> {
+        let mut games = self.games.write().unwrap();
+        let game = games.get_mut(&id).ok_or(GameDataError::InvalidID)?;
         game.state = GameState::Active;
-
-
-        Ok(())
+        let user_ids = game.users.read().unwrap().keys().copied().collect();
+        Ok(user_ids)
     }
 
   

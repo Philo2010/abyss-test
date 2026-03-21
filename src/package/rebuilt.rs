@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 const FUEL_TELEOP: f32 = 1.0;
 const FUEL_AUTO: f32 = 1.0;
 
-#[derive(Serialize, Deserialize, Clone, Copy, ts_rs::TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, ts_rs::TS)]
 pub enum ClimbState {
     Nothing,
     Stage1,
@@ -19,7 +19,7 @@ const STAGE_2_AUTO: i32 = 15;
 const STAGE_3_AUTO: i32 = 15;
 
 
-#[derive(Serialize, Deserialize, Clone, Copy, ts_rs::TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, ts_rs::TS)]
 pub struct Model {
     pub defence_main: bool, //X
     pub fuel_shoot_teleop: f32, //X
@@ -42,7 +42,7 @@ pub struct ModelOptional {
     pub beach_on_bump: Option<bool>, 
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, ts_rs::TS)]
+#[derive(Serialize, Deserialize, Clone, Debug, Copy, ts_rs::TS)]
 pub enum Patch {
     DefenceMain(bool),
     FuelShootTeleop(f32),
@@ -50,6 +50,7 @@ pub enum Patch {
     FuelShootAuto(f32),
     FuelPassAuto(f32),
     ClimbEnd(ClimbState),
+    ClimbAuto(ClimbState),
     BeachOnBump(bool)
 }
 

@@ -25,6 +25,12 @@ pub enum Routing {
         message: String,
         targets: Vec<Uuid>,
     },
+    /// Send `ret` to the sender and `broadcast` to every UUID in `targets`.
+    ReturnAndBroadcast {
+        ret: String,
+        broadcast: String,
+        targets: Vec<Uuid>,
+    },
 }
 // ─── Per-user handle ──────────────────────────────────────────────────────────
 
@@ -154,6 +160,16 @@ impl Server {
                     user.send(msg_admin);
                 }
             },
+            Routing::ReturnAndBroadcast { ret, broadcast, targets } => {
+                if let Some(user) = users.get(&sender_id) {
+                    user.send(ret);
+                }
+                for target_id in &targets {
+                    if let Some(user) = users.get(target_id) {
+                        user.send(broadcast.clone());
+                    }
+                }
+            },
         }
     }
 
@@ -197,7 +213,6 @@ fn is_mult(p: &Packages) -> IsMultReturn {
 }
 
 pub fn handle(input: String, game: &Storage, uuid: Uuid) -> Routing {
-    if let Some(body) = input.strip_prefix("/broadcast ") {
         //Parse out the Enum
         let p: Packages = match serde_json::from_str(&input) {
             Ok(a) => {
@@ -207,6 +222,8 @@ pub fn handle(input: String, game: &Storage, uuid: Uuid) -> Routing {
                 return Routing::Return("Invalid!".to_string());
             }
         };
+
+        println!("Got package {:?}", p);
 
         //check if mult
         let mult_res = is_mult(&p);
@@ -222,39 +239,35 @@ pub fn handle(input: String, game: &Storage, uuid: Uuid) -> Routing {
         }
 
         //all weird stuff is delt with!
-        let res = match handle_pkg::handle_pkg(game, p, uuid) {
-            Ok(a) => {
-                let res_str = match serde_json::to_string(&a.0) {
-                    Ok(e) => {
-                        e
-                    },
-                    Err(e) => {
-                        return Routing::Return("Invalid!".to_string());
-                    }
+        match handle_pkg::handle_pkg(game, p, uuid) {
+            Ok((main_pkg, admin_pkg, broadcast)) => {
+                let res_str = match serde_json::to_string(&main_pkg) {
+                    Ok(e) => e,
+                    Err(_) => return Routing::Return("Invalid!".to_string()),
                 };
 
-                if let Some(admin_stuff) = a.1 {
-                    let admin_str = match serde_json::to_string(&admin_stuff.0) {
-                        Ok(e) => {
-                            e
-                        },
-                        Err(e) => {
-                            return Routing::Return("Invalid!".to_string());
-                        }
+                if let Some((broadcast_pkg, targets)) = broadcast {
+                    let broadcast_str = match serde_json::to_string(&broadcast_pkg) {
+                        Ok(e) => e,
+                        Err(_) => return Routing::Return("Invalid!".to_string()),
                     };
-
-                    return Routing::ReturnConAdmin((res_str, admin_stuff.1, admin_str));
-
+                    return Routing::ReturnAndBroadcast {
+                        ret: res_str,
+                        broadcast: broadcast_str,
+                        targets,
+                    };
                 }
 
-                return Routing::Return(res_str);
+                if let Some(admin_stuff) = admin_pkg {
+                    let admin_str = match serde_json::to_string(&admin_stuff.0) {
+                        Ok(e) => e,
+                        Err(_) => return Routing::Return("Invalid!".to_string()),
+                    };
+                    return Routing::ReturnConAdmin((res_str, admin_stuff.1, admin_str));
+                }
+
+                Routing::Return(res_str)
             },
-            Err(a) => {
-                return Routing::Return("Invalid!".to_string());
-            },
-        };
-    } else {
-        // Default: echo back to the sender.
-        Routing::Return(format!("echo: {input}"))
-    }
+            Err(_) => Routing::Return("Invalid!".to_string()),
+        }
 }

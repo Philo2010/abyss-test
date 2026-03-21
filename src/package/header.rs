@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Copy, Eq, Hash, PartialEq, Serialize, Debug, Deserialize, ts_rs::TS)]
 pub enum Stations {
     Red1,
     Red2,
