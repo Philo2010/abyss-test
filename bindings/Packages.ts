@@ -5,6 +5,8 @@ import type { InformGameEnd } from "./InformGameEnd";
 import type { LoginUser } from "./LoginUser";
 import type { LoginUserReturn } from "./LoginUserReturn";
 import type { LoginUserUpdateAdmin } from "./LoginUserUpdateAdmin";
+import type { Resume } from "./Resume";
+import type { ResumeReturn } from "./ResumeReturn";
 import type { ReturnForAdmin } from "./ReturnForAdmin";
 import type { StartGame } from "./StartGame";
 import type { StartGameReturn } from "./StartGameReturn";
@@ -12,4 +14,4 @@ import type { SubmitScouter } from "./SubmitScouter";
 import type { UpdateInformAdmin } from "./UpdateInformAdmin";
 import type { UpdateValue } from "./UpdateValue";
 
-export type Packages = { "CreateNewGame": CreateNewGame } | { "CreateNewGameReturn": CreateNewGameReturn } | { "LoginUser": LoginUser } | { "LoginUserReturn": LoginUserReturn } | { "LoginUserUpdateAdmin": LoginUserUpdateAdmin } | { "StartGame": StartGame } | { "StartGameReturn": StartGameReturn } | { "UpdateValue": UpdateValue } | { "UpdateInformAdmin": UpdateInformAdmin } | { "SubmitScouter": SubmitScouter } | { "ReturnForAdmin": ReturnForAdmin } | { "InformGameEnd": InformGameEnd } | { "InformGameSend": never[] } | "Nop" | { "Error": string };
+export type Packages = { "CreateNewGame": CreateNewGame } | { "CreateNewGameReturn": CreateNewGameReturn } | { "LoginUser": LoginUser } | { "LoginUserReturn": LoginUserReturn } | { "LoginUserUpdateAdmin": LoginUserUpdateAdmin } | { "StartGame": StartGame } | { "StartGameReturn": StartGameReturn } | { "UpdateValue": UpdateValue } | { "UpdateInformAdmin": UpdateInformAdmin } | { "SubmitScouter": SubmitScouter } | { "ReturnForAdmin": ReturnForAdmin } | { "InformGameEnd": InformGameEnd } | { "InformGameSend": never[] } | { "Resume": Resume } | { "ResumeReturn": ResumeReturn } | "Nop" | { "Error": string };

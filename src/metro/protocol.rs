@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::package::{header::Stations, rebuilt::{self, Patch}};
 
 
-#[derive(Serialize, Deserialize, Debug, ts_rs::TS)]
+#[derive(Serialize, Deserialize, Debug, Clone, ts_rs::TS)]
 pub enum OptionalModelPatch {
     Defence(f32),
     Comment(String),
@@ -26,6 +26,8 @@ pub enum Packages {
     ReturnForAdmin(ReturnForAdmin),
     InformGameEnd(InformGameEnd), //should not send
     InformGameSend(), 
+    Resume(Resume),
+    ResumeReturn(ResumeReturn),
     Nop,
     Error(String)
 }
@@ -111,4 +113,27 @@ pub struct InformGameEnd {
     //For all users
     pub targets: Vec<Uuid>,
     //since is not being just sent to the admin or return, we need a defined target
+}
+
+/// Sent by a client right after (re)connecting to re-attach this socket to the
+/// identity it had before the connection dropped. The server swaps the dead
+/// handle for the new one, so the client keeps its UUID, station and game.
+#[derive(Serialize, Deserialize, Debug, Clone, ts_rs::TS)]
+pub struct Resume {
+    pub uuid: Uuid,
+}
+
+/// Server's answer to [`Resume`]. If `uuid` is unknown the server replies with
+/// [`Packages::Error`] instead and the client should start over.
+#[derive(Serialize, Deserialize, Debug, Clone, ts_rs::TS)]
+pub struct ResumeReturn {
+    pub uuid: Uuid,
+    pub code: usize,
+    /// `None` for the admin, `Some(station)` for a scout.
+    pub station: Option<Stations>,
+    pub is_admin: bool,
+    /// The game is currently running (Active or Over).
+    pub started: bool,
+    /// The game already finished.
+    pub ended: bool,
 }

@@ -6,22 +6,104 @@ use std::sync::{Mutex, RwLock};
 
 use uuid::Uuid;
 
+use crate::metro::protocol::OptionalModelPatch;
 use crate::package::rebuilt::{self, Patch, total_score_auto, total_score_teleop};
 use crate::package::{header};
-use crate::package::{Match, MatchOp, header::Stations};
+use crate::package::{Match, header::Stations};
 
 
 #[derive(Clone)]
 pub struct UserEntry {
     username: String,
     done: bool,
-    station: Stations
+    station: Stations,
+    /// Latest un-submitted values, kept so the admin can be re-synced after a
+    /// dropped connection (see [`Storage::snapshot`]).
+    live: UserLiveState,
 }
 
+/// Accumulated live edits for a single scout. Patches are coalesced per field
+/// so a long game does not grow this without bound.
+#[derive(Clone, Default)]
+pub struct UserLiveState {
+    patches: Vec<OptionalModelPatch>,
+}
+
+impl UserLiveState {
+    /// Store `patch`, replacing any previous patch that targets the same field.
+    pub fn apply(&mut self, patch: OptionalModelPatch) {
+        let key = patch_key(&patch);
+        if let Some(slot) = self.patches.iter_mut().find(|p| patch_key(p) == key) {
+            *slot = patch;
+        } else {
+            self.patches.push(patch);
+        }
+    }
+
+    /// Coalesced patches, safe to replay to the admin.
+    pub fn patches(&self) -> &[OptionalModelPatch] {
+        &self.patches
+    }
+}
+
+/// Discriminant used to coalesce patches that write the same field.
+fn patch_key(patch: &OptionalModelPatch) -> u8 {
+    match patch {
+        OptionalModelPatch::Defence(_) => 0,
+        OptionalModelPatch::Comment(_) => 1,
+        OptionalModelPatch::Game(game) => match game {
+            Patch::DefenceMain(_) => 2,
+            Patch::FuelShootTeleop(_) => 3,
+            Patch::FuelPassTeleop(_) => 4,
+            Patch::FuelShootAuto(_) => 5,
+            Patch::FuelPassAuto(_) => 6,
+            Patch::ClimbEnd(_) => 7,
+            Patch::ClimbAuto(_) => 8,
+            Patch::BeachOnBump(_) => 9,
+            Patch::DefenceTarget(_) => 10,
+            Patch::AutoTime(_) => 11,
+            Patch::Dead(_) => 12,
+            Patch::Dnf(_) => 13,
+        },
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GameState {
     Waiting,
     Active,
     Over, //Soon to be cleared
+}
+
+/// Everything needed to re-attach a dropped client to its former identity.
+pub struct ResumeInfo {
+    pub code: usize,
+    pub station: Option<Stations>,
+    pub is_admin: bool,
+    pub started: bool,
+    pub ended: bool,
+}
+
+/// A scout's last known state, used to rebuild the admin table on reconnect.
+pub struct UserSnapshot {
+    pub uuid: Uuid,
+    pub username: String,
+    pub station: Stations,
+    pub live: Vec<OptionalModelPatch>,
+}
+
+/// A finished run, used to rebuild the admin table on reconnect.
+pub struct SubmittedSnapshot {
+    pub data: rebuilt::Model,
+    pub defence: f32,
+    pub comment: String,
+    pub user_uuid: Uuid,
+}
+
+pub struct GameSnapshot {
+    pub state: GameState,
+    pub users: Vec<UserSnapshot>,
+    pub submitted: Vec<SubmittedSnapshot>,
 }
 
 #[derive(Default)]
@@ -83,10 +165,89 @@ impl Storage {
         games.remove(&id);
     }
 
-    pub fn get_admin(&self, id: usize) -> Uuid {
+    pub fn get_admin(&self, id: usize) -> Result<Uuid, GameDataError> {
         let games = self.games.read().unwrap();
-        let game = games.get(&id).unwrap();
-        game.admin
+        let game = games.get(&id).ok_or(GameDataError::InvalidID)?;
+        Ok(game.admin)
+    }
+
+    /// Look up a UUID across every game and report the identity behind it.
+    ///
+    /// Used by the resume handshake: the server must find out which game a
+    /// reconnecting client belonged to before it can re-attach the socket.
+    pub fn resume_info(&self, uuid: Uuid) -> Result<ResumeInfo, GameDataError> {
+        let games = self.games.read().unwrap();
+        for (code, game) in games.iter() {
+            if game.admin == uuid {
+                return Ok(ResumeInfo {
+                    code: *code,
+                    station: None,
+                    is_admin: true,
+                    started: game.state != GameState::Waiting,
+                    ended: game.state == GameState::Over,
+                });
+            }
+
+            if let Some(user) = game.users.read().unwrap().get(&uuid) {
+                return Ok(ResumeInfo {
+                    code: *code,
+                    station: Some(user.station),
+                    is_admin: false,
+                    started: game.state != GameState::Waiting,
+                    ended: game.state == GameState::Over,
+                });
+            }
+        }
+        Err(GameDataError::InvalidID)
+    }
+
+    /// Record the latest live edit for a scout so it can be replayed to a
+    /// reconnecting admin.
+    pub fn record_live(&self, id: usize, user_uuid: Uuid, patch: OptionalModelPatch) -> Result<(), GameDataError> {
+        let games = self.games.read().unwrap();
+        let game = games.get(&id).ok_or(GameDataError::InvalidID)?;
+        let mut users = game.users.write().unwrap();
+        let user = users.get_mut(&user_uuid).ok_or(GameDataError::InvalidID)?;
+        if !user.done {
+            user.live.apply(patch);
+        }
+        Ok(())
+    }
+
+    /// Full state of a game, used to rebuild an admin UI after a reconnect.
+    pub fn snapshot(&self, id: usize) -> Result<GameSnapshot, GameDataError> {
+        let games = self.games.read().unwrap();
+        let game = games.get(&id).ok_or(GameDataError::InvalidID)?;
+
+        let users = game.users.read().unwrap();
+        let user_snapshots: Vec<UserSnapshot> = users
+            .iter()
+            .map(|(uuid, user)| UserSnapshot {
+                uuid: *uuid,
+                username: user.username.clone(),
+                station: user.station,
+                live: user.live.patches().to_vec(),
+            })
+            .collect();
+        drop(users);
+
+        let mut submitted = Vec::new();
+        for (matches, _) in game.final_store.into_iter() {
+            for m in matches {
+                submitted.push(SubmittedSnapshot {
+                    data: m.game.clone(),
+                    defence: m.header.defence,
+                    comment: m.header.comment.clone(),
+                    user_uuid: m.user_uuid,
+                });
+            }
+        }
+
+        Ok(GameSnapshot {
+            state: game.state,
+            users: user_snapshots,
+            submitted,
+        })
     }
 
     pub fn create_new_game(&self, admin: Uuid) -> usize {
@@ -121,7 +282,7 @@ impl Storage {
             .copied()
             .unwrap_or_else(|| all_stations[fastrand::usize(0..6)]);
 
-        users.insert(user_id, UserEntry { station: curr_station, username: user, done: false });
+        users.insert(user_id, UserEntry { station: curr_station, username: user, done: false, live: UserLiveState::default() });
         Ok((user_id, curr_station))
     }
 
@@ -153,26 +314,23 @@ impl Storage {
         let game = games.get(&game_id).ok_or(GameDataError::InvalidID)?;
         let mut users_send = Vec::new();
 
-        //time to check if scouters are done
-        for user in game.users.read().unwrap().iter() {
-            if !user.1.done {
-                return Err(GameDataError::GameIsNotReady);
-            } else {
-                users_send.push(*user.0);
-            }
+        // The game is ready to end once every registered scout has submitted.
+        let users = game.users.read().unwrap();
+        if users.is_empty() {
+            return Err(GameDataError::GameIsNotReady);
         }
-
-        //we are now safe to end.... just one more safty check
-        for finals in game.final_store.into_iter() {
-            if finals.0.is_empty() {
+        for (uuid, user) in users.iter() {
+            if !user.done {
                 return Err(GameDataError::GameIsNotReady);
             }
+            users_send.push(*uuid);
         }
+        drop(users);
         drop(games);
+
         let mut games = self.games.write().unwrap();
         let game = games.get_mut(&game_id).ok_or(GameDataError::InvalidID)?;
         game.state = GameState::Over;
-
 
         //to be cleaned up soon
         Ok(users_send)
@@ -204,43 +362,43 @@ impl Storage {
         };
 
 
-        //need to write now
-        let mut games = self.games.write().unwrap();
+        // Record the submission. Scoped so every lock is released before the
+        // readiness check below (which re-locks `games`).
+        {
+            let mut games = self.games.write().unwrap();
 
-        let mut game: &mut Game = games.get_mut(&game_id)
-            .ok_or(GameDataError::InvalidID)?;
-        let mut user_mods = game.users.write().unwrap();
-        let mut user_mod =  user_mods.get_mut(&user_uuid).ok_or(GameDataError::InvalidID)?;
-        user_mod.done = true;
-        match user.station {
-            Stations::Red1 => {
-                game.final_store.red1.push(Match { header, game: data });
-            },
-            Stations::Red2 => {
-                game.final_store.red2.push(Match { header, game: data });
-            },
-            Stations::Red3 => {
-                game.final_store.red3.push(Match { header, game: data });
-            },
-            Stations::Blue1 => {
-                game.final_store.blue1.push(Match { header, game: data });
-            },
-            Stations::Blue2 => {
-                game.final_store.blue2.push(Match { header, game: data });
-            },
-            Stations::Blue3 => {
-                game.final_store.blue3.push(Match { header, game: data });
-            },
+            let game: &mut Game = games.get_mut(&game_id)
+                .ok_or(GameDataError::InvalidID)?;
+            let mut user_mods = game.users.write().unwrap();
+            let mut user_mod = user_mods.get_mut(&user_uuid).ok_or(GameDataError::InvalidID)?;
+            user_mod.done = true;
+            match user.station {
+                Stations::Red1 => {
+                    game.final_store.red1.push(Match { header, game: data, user_uuid });
+                },
+                Stations::Red2 => {
+                    game.final_store.red2.push(Match { header, game: data, user_uuid });
+                },
+                Stations::Red3 => {
+                    game.final_store.red3.push(Match { header, game: data, user_uuid });
+                },
+                Stations::Blue1 => {
+                    game.final_store.blue1.push(Match { header, game: data, user_uuid });
+                },
+                Stations::Blue2 => {
+                    game.final_store.blue2.push(Match { header, game: data, user_uuid });
+                },
+                Stations::Blue3 => {
+                    game.final_store.blue3.push(Match { header, game: data, user_uuid });
+                },
+            }
         }
-        //Todo make the end game rotine
+
+        // Every scout in — the game can end.
         match self.end_game(game_id) {
-            Ok(a) => {
-                return Ok(Some(a))
-            },
-            Err(a) => {
-                return Ok(None);
-            },
-        };
+            Ok(a) => Ok(Some(a)),
+            Err(_) => Ok(None),
+        }
     }
 
 

@@ -4,8 +4,9 @@ pub mod storage;
 
 
 pub struct Match {
-    game: rebuilt::Model,
-    header: header::Model
+    pub game: rebuilt::Model,
+    pub header: header::Model,
+    pub user_uuid: uuid::Uuid,
 }
 pub struct MatchOp {
 

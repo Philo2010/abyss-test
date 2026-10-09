@@ -19,6 +19,22 @@ const STAGE_2_AUTO: i32 = 15;
 const STAGE_3_AUTO: i32 = 15;
 
 
+/// A single FRC team — the `B` suffix teams are tracked separately.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, ts_rs::TS)]
+pub struct Team {
+    pub number: i32,
+    pub is_ab_team: bool,
+}
+
+/// What a main defender spent the match defending. `Alliance` means the
+/// defence was spread across the whole opposing alliance; `Bot` means a single
+/// opposing robot was targeted.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, ts_rs::TS)]
+pub enum DefenceTarget {
+    Alliance,
+    Bot(Team),
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, ts_rs::TS)]
 pub struct Model {
     pub defence_main: bool, //X
@@ -29,6 +45,10 @@ pub struct Model {
     pub climb_end: ClimbState, 
     pub climb_auto: ClimbState, 
     pub beach_on_bump: bool, 
+    pub defence_target: Option<DefenceTarget>,
+    pub auto_time: f32,
+    pub dead: bool,
+    pub dnf: bool,
 }
 
 pub struct ModelOptional {
@@ -40,6 +60,10 @@ pub struct ModelOptional {
     pub climb_end: Option<ClimbState>, 
     pub climb_auto: Option<ClimbState>, 
     pub beach_on_bump: Option<bool>, 
+    pub defence_target: Option<DefenceTarget>,
+    pub auto_time: Option<f32>,
+    pub dead: Option<bool>,
+    pub dnf: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Copy, ts_rs::TS)]
@@ -51,7 +75,11 @@ pub enum Patch {
     FuelPassAuto(f32),
     ClimbEnd(ClimbState),
     ClimbAuto(ClimbState),
-    BeachOnBump(bool)
+    BeachOnBump(bool),
+    DefenceTarget(Option<DefenceTarget>),
+    AutoTime(f32),
+    Dead(bool),
+    Dnf(bool),
 }
 
 
